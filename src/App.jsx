@@ -1,5 +1,6 @@
 // src/App.jsx
 import { useState, useCallback } from 'react';
+import LoginGate, { getStoredPassword } from './components/LoginGate.jsx';
 import AutoInput from './components/AutoInput.jsx';
 import LabInputPanel from './components/LabInputPanel.jsx';
 import ResultPanel from './components/ResultPanel.jsx';
@@ -18,7 +19,11 @@ const TABS = [
   { id: 'ref',     label: '📖 正常範囲' },
 ];
 
+// localhost ではログイン不要
+const IS_LOCAL = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+
 export default function App() {
+  const [password, setPassword] = useState(() => IS_LOCAL ? "__local__" : getStoredPassword());
   const [tab, setTab] = useState('input');
   const [sex, setSex] = useState('male');
   const [values, setValues] = useState({});
@@ -45,11 +50,18 @@ export default function App() {
     setTab('labinfo');
   }, []);
 
+  // 未ログインならLoginGateを表示
+  if (!password) {
+    return <LoginGate onLogin={setPassword} />;
+  }
+
   // バッジ計算
   const entered = Object.keys(values).filter(k => values[k] !== '' && values[k] !== null && values[k] !== undefined);
   const ev = {};
   for (const k of Object.keys(REF)) ev[k] = evalVal(k, values[k], sex);
-  const matchedCount = DISEASES.filter(d => d.requiredKeys.every(r => entered.includes(r.key)) && d.conditionFn(values, ev, sex)).length;
+  const matchedCount = DISEASES.filter(d =>
+    d.requiredKeys.every(r => entered.includes(r.key)) && d.conditionFn(values, ev, sex)
+  ).length;
   const { partial } = analyzeCoverage(values, sex);
 
   return (
@@ -58,10 +70,18 @@ export default function App() {
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 0 0' }}>
             <div style={{ background: '#3b82f6', borderRadius: 10, width: 38, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>🔬</div>
-            <div>
+            <div style={{ flex: 1 }}>
               <h1 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>臨床検査値 疾患推定ツール</h1>
               <p style={{ margin: 0, fontSize: 11, color: '#94a3b8' }}>正常範囲に基づく古典的判定 ／ ベストマッチ ／ 疾患逆引き ／ 検査値詳細</p>
             </div>
+            {!IS_LOCAL && (
+              <button
+                onClick={() => { localStorage.removeItem("clinical_lab_pw"); setPassword(""); }}
+                style={{ padding: '5px 12px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 8, color: '#94a3b8', fontSize: 11, cursor: 'pointer' }}
+              >
+                ログアウト
+              </button>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 2, marginTop: 12, flexWrap: 'wrap' }}>
             {TABS.map(t => {
@@ -93,20 +113,14 @@ export default function App() {
 
         {tab === 'input' && (
           <>
-            <AutoInput onApply={applyFromAI} />
+            <AutoInput onApply={applyFromAI} password={password} />
             <LabInputPanel values={values} sex={sex} setSex={setSex} onChange={setVal} onClear={clearAll} onShowLabDetail={showLabDetail} />
           </>
         )}
-        {tab === 'result' && (
-          <ResultPanel values={values} sex={sex} symptoms={symptoms} toggleSymptom={toggleSymptom} />
-        )}
-        {tab === 'explore' && (
-          <DiseaseExplorer onApplyTypical={applyTypical} onShowLabDetail={showLabDetail} />
-        )}
-        {tab === 'labinfo' && (
-          <LabDetail selectedKey={selectedLabKey} onSelect={setSelectedLabKey} />
-        )}
-        {tab === 'ref' && <ReferenceTable />}
+        {tab === 'result'  && <ResultPanel values={values} sex={sex} symptoms={symptoms} toggleSymptom={toggleSymptom} />}
+        {tab === 'explore' && <DiseaseExplorer onApplyTypical={applyTypical} onShowLabDetail={showLabDetail} />}
+        {tab === 'labinfo' && <LabDetail selectedKey={selectedLabKey} onSelect={setSelectedLabKey} />}
+        {tab === 'ref'     && <ReferenceTable />}
       </main>
     </div>
   );

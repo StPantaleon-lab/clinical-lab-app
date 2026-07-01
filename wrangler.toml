@@ -1,0 +1,15 @@
+name = "clinical-lab-proxy"
+main = "workers/proxy.js"
+compatibility_date = "2024-01-01"
+
+# ローカル開発用（wrangler dev で起動）
+[dev]
+port = 8787
+
+# 本番環境変数は Cloudflare Dashboard で設定する
+# APP_PASSWORD と GROQ_API_KEY をダッシュボードの
+# Workers > clinical-lab-proxy > Settings > Variables に追加すること
+# （このファイルには絶対に書かない）
+
+# Cloudflare Pages と同じアカウントにデプロイする場合、
+# Pages の wrangler.toml と混在しないよう注意
