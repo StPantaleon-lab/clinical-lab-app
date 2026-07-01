@@ -4,6 +4,32 @@ import { DISEASES } from '../data/diseases.js';
 import { evalVal, REF } from '../data/referenceRanges.js';
 
 // ────────────────────────────────────────────────
+// UPCR自動計算（随時尿蛋白 / 尿クレアチニン）
+// UPro(mg/dL) / UCre(mg/dL) = UPCR(g/gCr)
+// ────────────────────────────────────────────────
+export function calcDerivedValues(values) {
+  const derived = { ...values };
+
+  // UPCR自動計算
+  const upro = parseFloat(values.UPro);
+  const ucre = parseFloat(values.UCre);
+  if (!isNaN(upro) && !isNaN(ucre) && ucre > 0 && !values.UPCR) {
+    derived.UPCR = String((upro / ucre).toFixed(2));
+  }
+
+  // BMI自動計算
+  const h = parseFloat(values.Height);
+  const w = parseFloat(values.Weight);
+  if (!isNaN(h) && !isNaN(w) && h > 0 && !values.BMI) {
+    derived.BMI = String((w / ((h / 100) ** 2)).toFixed(1));
+  }
+
+  // Hct → RBC換算補助（Ht表記対応は parseLabValues.js 側で対処）
+
+  return derived;
+}
+
+// ────────────────────────────────────────────────
 // 検査値1項目のスコア判定
 // ────────────────────────────────────────────────
 function scoreItem(key, direction, values, sex) {
@@ -18,31 +44,52 @@ function scoreItem(key, direction, values, sex) {
 }
 
 // ────────────────────────────────────────────────
-// 疾患ごとのスコアを計算（検査値＋症候）
+// 改善版スコアリング
+// 「検査済み項目での一致率」を重視し、未検査が多い病気が有利にならないようにする
 // ────────────────────────────────────────────────
 export function scoreDiseases(values, sex, checkedSymptoms = {}) {
+  const derived = calcDerivedValues(values);
+
   return DISEASES.map((d) => {
-    // 検査値スコア
     const items = d.requiredKeys.map(({ key, direction }) => ({
       key, direction,
-      status: scoreItem(key, direction, values, sex),
+      status: scoreItem(key, direction, derived, sex),
     }));
-    const match      = items.filter(i => i.status === "match");
-    const missing    = items.filter(i => i.status === "missing");
-    const normalOut  = items.filter(i => i.status === "normal_out");
-    const opposite   = items.filter(i => i.status === "opposite");
-    const total      = items.length;
 
-    // 症候スコア（一致症候数 / 全症候数）
+    const match     = items.filter(i => i.status === "match");
+    const missing   = items.filter(i => i.status === "missing");
+    const normalOut = items.filter(i => i.status === "normal_out");
+    const opposite  = items.filter(i => i.status === "opposite");
+    const total     = items.length;
+    const checked   = items.filter(i => i.status !== "missing");
+
+    // ── 改善版スコア計算 ──────────────────────────────
+    // 検査済み項目がない場合はスコア0
+    if (checked.length === 0) {
+      return { disease: d, items, match, missing, normalOut, opposite, score: 0, total, matchedSymptoms: [] };
+    }
+
+    // 検査済み項目での純粋な一致率（-1〜1）
+    const matchRate = checked.length === 0 ? 0
+      : (match.length * 2 - normalOut.length - opposite.length * 2) / (checked.length * 2);
+
+    // 検査カバレッジボーナス（検査済み項目数が多いほど信頼性が上がるが緩やかに）
+    const coverageBonus = total === 0 ? 0 : Math.sqrt(checked.length / total);
+
+    // 除外ペナルティ（逆方向の異常や正常が出た場合は強く減点）
+    const exclusionPenalty = (normalOut.length + opposite.length * 2) / Math.max(checked.length, 1);
+
+    // 検査値スコア（一致率 × カバレッジ × 除外ペナルティ）
+    const labScore = matchRate * coverageBonus * (1 - exclusionPenalty * 0.5);
+
+    // 症候スコア
     const matchedSymptoms = d.symptoms.filter(s => checkedSymptoms[s.key]);
-    const symptomScore    = d.symptoms.length > 0
+    const symptomScore = d.symptoms.length > 0
       ? matchedSymptoms.length / d.symptoms.length
       : 0;
 
     // 総合スコア（検査値7割・症候3割）
-    const labScore = total === 0 ? 0
-      : (match.length * 2 - normalOut.length - opposite.length * 2) / (total * 2);
-    const score = labScore * 0.7 + symptomScore * 0.3;
+    const score = Math.max(0, labScore * 0.7 + symptomScore * 0.3);
 
     return { disease: d, items, match, missing, normalOut, opposite, score, total, matchedSymptoms };
   }).sort((a, b) => b.score - a.score);
@@ -52,8 +99,9 @@ export function scoreDiseases(values, sex, checkedSymptoms = {}) {
 // 判定可能 / 一部 / 不可 の分類
 // ────────────────────────────────────────────────
 export function analyzeCoverage(values, sex) {
+  const derived = calcDerivedValues(values);
   const entered = new Set(
-    Object.keys(values).filter(k => values[k] !== "" && values[k] !== null && values[k] !== undefined)
+    Object.keys(derived).filter(k => derived[k] !== "" && derived[k] !== null && derived[k] !== undefined)
   );
   const evaluable = [], partial = [], unevaluable = [];
 
@@ -89,8 +137,9 @@ export function getRuleOutOpportunities(values, matchedDiseases) {
 // あと1項目で判定可能になる検査のランキング
 // ────────────────────────────────────────────────
 export function getSuggestedNextTests(values) {
+  const derived = calcDerivedValues(values);
   const entered = new Set(
-    Object.keys(values).filter(k => values[k] !== "" && values[k] !== null && values[k] !== undefined)
+    Object.keys(derived).filter(k => derived[k] !== "" && derived[k] !== null && derived[k] !== undefined)
   );
   const gainMap = {};
   for (const disease of DISEASES) {

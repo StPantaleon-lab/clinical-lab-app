@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { DISEASES, CATEGORIES } from '../data/diseases.js';
 import { evalVal, REF } from '../data/referenceRanges.js';
 import { SYMPTOM_GROUPS, SYMPTOM_MAP } from '../data/symptoms.js';
-import { scoreDiseases, getRuleOutOpportunities } from '../lib/coverage.js';
+import { scoreDiseases, getRuleOutOpportunities, calcDerivedValues } from '../lib/coverage.js';
 import CoveragePanel from './CoveragePanel.jsx';
 
 const CAT_COLOR = {
@@ -106,6 +106,25 @@ function DiseaseCard({ scored, symptoms, toggleSymptom, onShowDetail }) {
             ))}
           </div>
 
+          {/* 除外根拠（正常値が出た項目・逆方向の異常）*/}
+          {(normalOut.length > 0 || opposite.length > 0) && (
+            <div style={{ padding: '8px 12px', background: '#fef9c3', borderRadius: 8, borderLeft: '3px solid #f59e0b', marginBottom: 8 }}>
+              <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 700, color: '#92400e' }}>🔍 否定方向の根拠：</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {normalOut.map(item => (
+                  <span key={item.key} style={{ fontSize: 11, padding: '1px 7px', borderRadius: 12, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}>
+                    ⚠️ {REF[item.key]?.abbr || item.key} 正常（{item.direction === 'high' ? '高値' : '低値'}期待）
+                  </span>
+                ))}
+                {opposite.map(item => (
+                  <span key={item.key} style={{ fontSize: 11, padding: '1px 7px', borderRadius: 12, background: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' }}>
+                    ❌ {REF[item.key]?.abbr || item.key} 逆方向
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 臨床メモ */}
           <div style={{ padding: '8px 12px', background: '#f8fafc', borderRadius: 8, borderLeft: '3px solid #3b82f6', marginBottom: 8 }}>
             <p style={{ margin: 0, fontSize: 12, color: '#334155', lineHeight: 1.7 }}>💬 {d.note}</p>
@@ -180,14 +199,15 @@ export default function ResultPanel({ values, sex, symptoms, toggleSymptom, onSh
   const [coverageOpen, setCoverageOpen] = useState(false);
 
   const entered = Object.keys(values).filter(k => values[k] !== "" && values[k] !== null && values[k] !== undefined);
+  const derived = calcDerivedValues(values);
   const ev = {};
-  for (const k of Object.keys(REF)) ev[k] = evalVal(k, values[k], sex);
+  for (const k of Object.keys(REF)) ev[k] = evalVal(k, derived[k], sex);
 
   const scored = scoreDiseases(values, sex, symptoms);
 
   const matched = scored.filter(s =>
-    s.disease.requiredKeys.every(r => entered.includes(r.key)) &&
-    s.disease.conditionFn(values, ev, sex)
+    s.disease.requiredKeys.every(r => Object.keys(derived).includes(r.key) && derived[r.key] !== "" && derived[r.key] !== null) &&
+    s.disease.conditionFn(derived, ev, sex)
   );
 
   const bestMatch = scored.filter(s => s.match.length > 0 || s.matchedSymptoms.length > 0).slice(0, 10);

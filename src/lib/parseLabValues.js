@@ -467,6 +467,31 @@ const RULE_MAP = [
   { re: /CA19[-\u30fb]?9\s*[:\uff1a]?\s*([\d.]+)/i,                   key: "CA199" },
   { re: /PSA\s*[:\uff1a]?\s*([\d.]+)/i,                               key: "PSA" },
   { re: /PIVKA[-\u30fb]?II\s*[:\uff1a]?\s*([\d.]+)/i,                 key: "PIVKA2" },
+  // ── バイタル ──
+  { re: /身長\s*(\d{2,3}(?:\.\d)?)\s*cm/i,                            key: "Height" },
+  { re: /体重\s*(\d{2,3}(?:\.\d)?)\s*kg/i,                            key: "Weight" },
+  { re: /体温\s*(3[5-9](?:\.\d)?|4[01](?:\.\d)?)/,                    key: "BT" },
+  { re: /SpO2\s*(\d{2,3})/i,                                           key: "SpO2" },
+  { re: /呼吸数\s*(\d+)/,                                              key: "RR" },
+  // ── 尿定量 ──
+  { re: /随時尿(?:の)?尿蛋白\s*([\d.]+)\s*mg\/dL/,                    key: "UPro" },
+  { re: /尿蛋白\s*([\d.]+)\s*mg\/dL/,                                  key: "UPro" },
+  { re: /(?:随時尿(?:の)?)?クレアチニン\s*([\d.]+)\s*mg\/dL/,          key: "UCre" },
+  { re: /尿中アルブミン\s*([\d.]+)/,                                   key: "UAlb" },
+  { re: /UPCR\s*[:\uff1a]?\s*([\d.]+)/i,                              key: "UPCR" },
+  // ── Ht/Hct 表記ゆれ ──
+  { re: /(?:Ht|Hct|ヘマトクリット)\s*[:\uff1a]?\s*([\d.]+)\s*[%％]/i, key: "Hct" },
+  // ── RBC 万単位対応 ──
+  { re: /赤血球\s*([\d.]+)\s*万/,                                      key: "RBC",
+    transform: v => String((parseFloat(v) * 10).toFixed(0)) }, // 万→×千 に変換して格納しない（百万単位のまま）
+];
+
+// 尿蛋白定性→定量推定テーブル（mg/dL目安）
+const URINE_PROTEIN_SEMI = [
+  { re: /蛋白\s*3[+＋]|蛋白\s*（\s*3[+＋]\s*）|蛋白\s*\(\s*3[+＋]\s*\)/,   value: "300" },
+  { re: /蛋白\s*2[+＋]|蛋白\s*（\s*2[+＋]\s*）|蛋白\s*\(\s*2[+＋]\s*\)/,   value: "100" },
+  { re: /蛋白\s*1[+＋]|蛋白\s*（\s*1[+＋]\s*）|蛋白\s*\(\s*1[+＋]\s*\)/,   value: "30"  },
+  { re: /蛋白\s*[+＋](?![+＋])/,                                              value: "30"  },
 ];
 
 export function extractLabValuesRuleBased(text) {
@@ -474,9 +499,34 @@ export function extractLabValuesRuleBased(text) {
   let sex = null;
   if (/女性|female|\bF\b/i.test(text)) sex = "female";
   else if (/男性|male|\bM\b/i.test(text)) sex = "male";
-  for (const { re, key } of RULE_MAP) {
+
+  for (const { re, key, transform } of RULE_MAP) {
     const m = text.match(re);
-    if (m) values[key] = m[1];
+    if (m) {
+      // RBCの万単位変換は特別処理（百万単位に変換して格納）
+      if (key === "RBC" && text.match(/赤血球\s*([\d.]+)\s*万/)) {
+        const manVal = text.match(/赤血球\s*([\d.]+)\s*万/);
+        if (manVal) values[key] = String((parseFloat(manVal[1]) / 100).toFixed(2));
+      } else {
+        values[key] = transform ? transform(m[1]) : m[1];
+      }
+    }
   }
+
+  // 尿蛋白定性からUProを推定（定量がなければ）
+  if (!values.UPro) {
+    for (const { re, value } of URINE_PROTEIN_SEMI) {
+      if (re.test(text)) { values.UPro = value; break; }
+    }
+  }
+
+  // 血圧のパース（SBP/DBP）
+  const bpM = text.match(/(\d{2,3})[\/／](\d{2,3})\s*(?:mmHg)?/);
+  if (bpM && !values.SBP) { values.SBP = bpM[1]; values.DBP = bpM[2]; }
+
+  // 脈拍のパース
+  const hrM = text.match(/脈拍\s*(\d+)/);
+  if (hrM && !values.HR) values.HR = hrM[1];
+
   return { sex, values, confidence: "low", unparsed: [], source: "rule" };
 }

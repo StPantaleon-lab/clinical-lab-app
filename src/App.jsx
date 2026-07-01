@@ -9,7 +9,7 @@ import DiseaseExplorer from './components/DiseaseExplorer.jsx';
 import LabDetail from './components/LabDetail.jsx';
 import { evalVal, REF } from './data/referenceRanges.js';
 import { DISEASES } from './data/diseases.js';
-import { analyzeCoverage, scoreDiseases } from './lib/coverage.js';
+import { analyzeCoverage, scoreDiseases, calcDerivedValues } from './lib/coverage.js';
 
 const TABS = [
   { id: 'input',   label: '📋 検査値入力' },
@@ -60,10 +60,12 @@ export default function App() {
 
   // バッジ計算
   const entered = Object.keys(values).filter(k => values[k] !== '' && values[k] !== null && values[k] !== undefined);
+  const derived = calcDerivedValues(values);
   const ev = {};
-  for (const k of Object.keys(REF)) ev[k] = evalVal(k, values[k], sex);
+  for (const k of Object.keys(REF)) ev[k] = evalVal(k, derived[k], sex);
   const matchedCount = DISEASES.filter(d =>
-    d.requiredKeys.every(r => entered.includes(r.key)) && d.conditionFn(values, ev, sex)
+    d.requiredKeys.every(r => derived[r.key] !== '' && derived[r.key] !== null && derived[r.key] !== undefined) &&
+    d.conditionFn(derived, ev, sex)
   ).length;
   const checkedSymptomCount = Object.values(symptoms).filter(Boolean).length;
   const { partial } = analyzeCoverage(values, sex);
