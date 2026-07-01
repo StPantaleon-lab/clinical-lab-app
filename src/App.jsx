@@ -130,7 +130,7 @@ export default function App() {
           <DiseaseExplorer onApplyTypical={applyTypical} onShowLabDetail={showLabDetail} initialDiseaseId={selectedDiseaseId} />
         )}
         {tab === 'labinfo' && (
-          <LabDetail selectedKey={selectedLabKey} onSelect={setSelectedLabKey} />
+          <LabDetail selectedKey={selectedLabKey} onSelect={setSelectedLabKey} onShowDiseaseDetail={showDiseaseDetail} />
         )}
         {tab === 'ref' && <ReferenceTable />}
       </main>

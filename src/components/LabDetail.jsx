@@ -4,10 +4,11 @@
 import { useState } from 'react';
 import { LAB_INFO } from '../data/labInfo.js';
 import { REF, GROUP_ORDER } from '../data/referenceRanges.js';
+import { DISEASES } from '../data/diseases.js';
 
 const CAT_COLOR = { high: { bg: '#fee2e2', text: '#991b1b', border: '#fca5a5', label: '↑ 高値になる疾患' }, low: { bg: '#dbeafe', text: '#1e40af', border: '#93c5fd', label: '↓ 低値になる疾患' } };
 
-function DiseaseList({ diseases, type }) {
+function DiseaseList({ diseases, type, onShowDiseaseDetail }) {
   if (!diseases || diseases.length === 0) return null;
   const col = CAT_COLOR[type];
   return (
@@ -16,28 +17,40 @@ function DiseaseList({ diseases, type }) {
         {col.label}（{diseases.length}件）
       </h4>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {diseases.map((d, i) => (
-          <div key={i} style={{ padding: '10px 14px', borderRadius: 10, background: 'white', border: `1.5px solid ${d.criteria ? col.border : '#e2e8f0'}`, position: 'relative' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              {d.criteria && (
-                <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: col.bg, color: col.text, border: `1px solid ${col.border}`, whiteSpace: 'nowrap' }}>
-                  診断基準
-                </span>
-              )}
-              <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{d.name}</span>
+        {diseases.map((d, i) => {
+          // diseases.jsに同名の疾患があればidを取得
+          const diseaseEntry = DISEASES.find(dd => dd.name === d.name);
+          return (
+            <div key={i} style={{ padding: '10px 14px', borderRadius: 10, background: 'white', border: `1.5px solid ${d.criteria ? col.border : '#e2e8f0'}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                {d.criteria && (
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: col.bg, color: col.text, border: `1px solid ${col.border}`, whiteSpace: 'nowrap' }}>
+                    診断基準
+                  </span>
+                )}
+                <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a', flex: 1 }}>{d.name}</span>
+                {diseaseEntry && onShowDiseaseDetail && (
+                  <button
+                    onClick={() => onShowDiseaseDetail(diseaseEntry.id)}
+                    style={{ padding: '3px 10px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  >
+                    🏥 疾患詳細 →
+                  </button>
+                )}
+              </div>
+              <p style={{ margin: 0, fontSize: 12, color: '#475569', lineHeight: 1.7 }}>
+                💡 <strong>機序：</strong>{d.mechanism}
+              </p>
+              {d.note && <p style={{ margin: '4px 0 0', fontSize: 11, color: '#94a3b8' }}>{d.note}</p>}
             </div>
-            <p style={{ margin: 0, fontSize: 12, color: '#475569', lineHeight: 1.7 }}>
-              💡 <strong>機序：</strong>{d.mechanism}
-            </p>
-            {d.note && <p style={{ margin: '4px 0 0', fontSize: 11, color: '#94a3b8' }}>{d.note}</p>}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
 }
 
-export default function LabDetail({ selectedKey, onSelect }) {
+export default function LabDetail({ selectedKey, onSelect, onShowDiseaseDetail }) {
   const [search, setSearch] = useState('');
 
   const groups = GROUP_ORDER.map(g => ({
@@ -140,10 +153,10 @@ export default function LabDetail({ selectedKey, onSelect }) {
             </div>
 
             {/* 高値疾患 */}
-            <DiseaseList diseases={info.highDiseases} type="high" />
+            <DiseaseList diseases={info.highDiseases} type="high" onShowDiseaseDetail={onShowDiseaseDetail} />
 
             {/* 低値疾患 */}
-            <DiseaseList diseases={info.lowDiseases} type="low" />
+            <DiseaseList diseases={info.lowDiseases} type="low" onShowDiseaseDetail={onShowDiseaseDetail} />
 
             {/* 除外できる疾患 */}
             {info.excludes && info.excludes.length > 0 && (
