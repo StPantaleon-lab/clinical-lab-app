@@ -155,3 +155,36 @@ export function evalVal(key, rawVal, sex = "male") {
 export function enteredKeys(values) {
   return new Set(Object.keys(values).filter(k => values[k] !== "" && values[k] !== null && values[k] !== undefined));
 }
+
+// ════════════ バイタルサイン ════════════
+// （正常範囲は成人安静時の目安）
+export const VITAL_REF = {
+  SBP:   { label: "収縮期血圧",    abbr: "SBP",    unit: "mmHg",  min: 90,  max: 139, group: "バイタルサイン" },
+  DBP:   { label: "拡張期血圧",    abbr: "DBP",    unit: "mmHg",  min: 60,  max: 89,  group: "バイタルサイン" },
+  HR:    { label: "脈拍数",        abbr: "HR",     unit: "回/分", min: 60,  max: 100, group: "バイタルサイン" },
+  BT:    { label: "体温",          abbr: "BT",     unit: "℃",    min: 36.0,max: 37.4, group: "バイタルサイン" },
+  SpO2:  { label: "経皮的酸素飽和度", abbr: "SpO2", unit: "%",   min: 96,  max: 100, group: "バイタルサイン" },
+  RR:    { label: "呼吸数",        abbr: "RR",     unit: "回/分", min: 12,  max: 20,  group: "バイタルサイン" },
+  Height:{ label: "身長",          abbr: "身長",   unit: "cm",    min: 0,   max: 9999,group: "バイタルサイン" },
+  Weight:{ label: "体重",          abbr: "体重",   unit: "kg",    min: 0,   max: 9999,group: "バイタルサイン" },
+  BMI:   { label: "BMI",           abbr: "BMI",    unit: "kg/m²", min: 18.5,max: 24.9,group: "バイタルサイン" },
+};
+
+// ════════════ 尿所見 ════════════
+// 定量値のみ（定性はsymptomsで扱う）
+export const URINE_REF = {
+  UPro:  { label: "尿蛋白（随時）",       abbr: "U-Pro",   unit: "mg/dL",        min: 0,   max: 14,   group: "尿所見" },
+  UCre:  { label: "尿クレアチニン（随時）", abbr: "U-Cre",  unit: "mg/dL",        min: 40,  max: 200,  group: "尿所見" },
+  UPCR:  { label: "尿蛋白/クレアチニン比", abbr: "UPCR",   unit: "g/gCr",        min: 0,   max: 0.15, group: "尿所見" },
+  UAlb:  { label: "尿中アルブミン（随時）", abbr: "U-Alb", unit: "mg/gCr",       min: 0,   max: 30,   group: "尿所見" },
+  UBUN:  { label: "尿中尿素窒素",         abbr: "U-BUN",   unit: "mg/dL",        min: 0,   max: 9999, group: "尿所見" },
+  UNa:   { label: "尿中ナトリウム",       abbr: "U-Na",    unit: "mEq/L",        min: 0,   max: 9999, group: "尿所見" },
+  URBCh: { label: "尿沈渣 赤血球",        abbr: "U-RBC",   unit: "/HPF",         min: 0,   max: 4,    group: "尿所見" },
+  UWBCh: { label: "尿沈渣 白血球",        abbr: "U-WBC",   unit: "/HPF",         min: 0,   max: 4,    group: "尿所見" },
+};
+
+// REFに統合
+Object.assign(REF, VITAL_REF, URINE_REF);
+
+// グループ順序に追加
+GROUP_ORDER.push("バイタルサイン", "尿所見");

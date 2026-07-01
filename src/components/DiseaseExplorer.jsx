@@ -26,9 +26,9 @@ function KeyBadge({ keyObj, role }) {
   );
 }
 
-export default function DiseaseExplorer({ onApplyTypical, onShowLabDetail }) {
+export default function DiseaseExplorer({ onApplyTypical, onShowLabDetail, initialDiseaseId }) {
   const [sortMode, setSortMode] = useState('category');
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useState(initialDiseaseId || null);
   const [search, setSearch] = useState('');
 
   const filtered = useMemo(() => {

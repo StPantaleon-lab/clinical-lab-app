@@ -9,7 +9,7 @@ import DiseaseExplorer from './components/DiseaseExplorer.jsx';
 import LabDetail from './components/LabDetail.jsx';
 import { evalVal, REF } from './data/referenceRanges.js';
 import { DISEASES } from './data/diseases.js';
-import { analyzeCoverage } from './lib/coverage.js';
+import { analyzeCoverage, scoreDiseases } from './lib/coverage.js';
 
 const TABS = [
   { id: 'input',   label: '📋 検査値入力' },
@@ -19,41 +19,44 @@ const TABS = [
   { id: 'ref',     label: '📖 正常範囲' },
 ];
 
-// localhost ではログイン不要
 const IS_LOCAL = location.hostname === "localhost" || location.hostname === "127.0.0.1";
 
 export default function App() {
-  const [password, setPassword] = useState(() => IS_LOCAL ? "__local__" : getStoredPassword());
-  const [tab, setTab] = useState('input');
-  const [sex, setSex] = useState('male');
-  const [values, setValues] = useState({});
-  const [symptoms, setSymptoms] = useState({});
+  const [password, setPassword]         = useState(() => IS_LOCAL ? "__local__" : getStoredPassword());
+  const [tab, setTab]                   = useState('input');
+  const [sex, setSex]                   = useState('male');
+  const [values, setValues]             = useState({});
+  const [symptoms, setSymptoms]         = useState({});
   const [selectedLabKey, setSelectedLabKey] = useState(null);
+  const [selectedDiseaseId, setSelectedDiseaseId] = useState(null);
 
-  const setVal = useCallback((key, val) => setValues(prev => ({ ...prev, [key]: val })), []);
-  const toggleSymptom = useCallback((key) => setSymptoms(prev => ({ ...prev, [key]: !prev[key] })), []);
-  const clearAll = useCallback(() => { setValues({}); setSymptoms({}); }, []);
+  const setVal         = useCallback((key, val) => setValues(prev => ({ ...prev, [key]: val })), []);
+  const toggleSymptom  = useCallback((key) => setSymptoms(prev => ({ ...prev, [key]: !prev[key] })), []);
+  const clearAll       = useCallback(() => { setValues({}); setSymptoms({}); }, []);
 
-  const applyFromAI = useCallback((newVals, detectedSex) => {
-    setValues(prev => ({ ...prev, ...newVals }));
+  // AutoInputからの反映（検査値＋自動抽出された症候・バイタル・尿所見）
+  const applyFromAI = useCallback((newVals, detectedSex, detectedSymptoms, detectedVitals, detectedUrine) => {
+    setValues(prev => ({ ...prev, ...newVals, ...(detectedVitals || {}), ...(detectedUrine || {}) }));
     if (detectedSex) setSex(detectedSex);
+    if (detectedSymptoms && detectedSymptoms.length > 0) {
+      setSymptoms(prev => {
+        const next = { ...prev };
+        for (const k of detectedSymptoms) next[k] = true;
+        return next;
+      });
+    }
     setTab('result');
   }, []);
 
-  const applyTypical = useCallback((typical) => {
-    setValues(typical);
-    setTab('input');
-  }, []);
+  const applyTypical = useCallback((typical) => { setValues(typical); setTab('input'); }, []);
 
-  const showLabDetail = useCallback((key) => {
-    setSelectedLabKey(key);
-    setTab('labinfo');
-  }, []);
+  const showLabDetail = useCallback((key) => { setSelectedLabKey(key); setTab('labinfo'); }, []);
 
-  // 未ログインならLoginGateを表示
-  if (!password) {
-    return <LoginGate onLogin={setPassword} />;
-  }
+  // 疾患詳細への遷移（DiseaseExplorer or ResultPanel から）
+  const showDiseaseDetail = useCallback((diseaseId) => {
+    setSelectedDiseaseId(diseaseId);
+    setTab('explore');
+  }, []);
 
   // バッジ計算
   const entered = Object.keys(values).filter(k => values[k] !== '' && values[k] !== null && values[k] !== undefined);
@@ -62,7 +65,10 @@ export default function App() {
   const matchedCount = DISEASES.filter(d =>
     d.requiredKeys.every(r => entered.includes(r.key)) && d.conditionFn(values, ev, sex)
   ).length;
+  const checkedSymptomCount = Object.values(symptoms).filter(Boolean).length;
   const { partial } = analyzeCoverage(values, sex);
+
+  if (!password) return <LoginGate onLogin={setPassword} />;
 
   return (
     <div style={{ minHeight: '100vh', background: '#f1f5f9' }}>
@@ -72,20 +78,19 @@ export default function App() {
             <div style={{ background: '#3b82f6', borderRadius: 10, width: 38, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>🔬</div>
             <div style={{ flex: 1 }}>
               <h1 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>臨床検査値 疾患推定ツール</h1>
-              <p style={{ margin: 0, fontSize: 11, color: '#94a3b8' }}>正常範囲に基づく古典的判定 ／ ベストマッチ ／ 疾患逆引き ／ 検査値詳細</p>
+              <p style={{ margin: 0, fontSize: 11, color: '#94a3b8' }}>検査値＋症候による総合判定 ／ 疾患逆引き ／ 検査値詳細</p>
             </div>
             {!IS_LOCAL && (
-              <button
-                onClick={() => { localStorage.removeItem("clinical_lab_pw"); setPassword(""); }}
-                style={{ padding: '5px 12px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 8, color: '#94a3b8', fontSize: 11, cursor: 'pointer' }}
-              >
+              <button onClick={() => { localStorage.removeItem("clinical_lab_pw"); setPassword(""); }}
+                style={{ padding: '5px 12px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 8, color: '#94a3b8', fontSize: 11, cursor: 'pointer' }}>
                 ログアウト
               </button>
             )}
           </div>
           <div style={{ display: 'flex', gap: 2, marginTop: 12, flexWrap: 'wrap' }}>
             {TABS.map(t => {
-              const badge = t.id === 'result' && matchedCount > 0 ? matchedCount : null;
+              const badge = t.id === 'result' && (matchedCount > 0 || checkedSymptomCount > 0)
+                ? (matchedCount > 0 ? matchedCount : null) : null;
               return (
                 <button key={t.id} onClick={() => setTab(t.id)} style={{ background: tab === t.id ? 'white' : 'transparent', color: tab === t.id ? '#0f172a' : '#94a3b8', border: 'none', borderRadius: '8px 8px 0 0', padding: '8px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', position: 'relative' }}>
                   {t.label}
@@ -98,12 +103,13 @@ export default function App() {
       </header>
 
       <main style={{ maxWidth: 1200, margin: '0 auto', padding: '20px 16px 40px' }}>
-        {entered.length > 0 && (
+        {(entered.length > 0 || checkedSymptomCount > 0) && (
           <div style={{ background: 'white', borderRadius: 10, padding: '9px 14px', marginBottom: 12, fontSize: 13, color: '#64748b', display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
             <span>入力済み: <strong style={{ color: '#0f172a' }}>{entered.length}</strong>項目</span>
+            <span>症候: <strong style={{ color: '#7c3aed' }}>{checkedSymptomCount}</strong>件</span>
             <span>確定陽性: <strong style={{ color: matchedCount > 0 ? '#dc2626' : '#16a34a' }}>{matchedCount}</strong>件</span>
             <span>あと少し: <strong style={{ color: '#d97706' }}>{partial.length}</strong>件</span>
-            {tab !== 'result' && matchedCount > 0 && (
+            {tab !== 'result' && (matchedCount > 0 || checkedSymptomCount > 0) && (
               <button onClick={() => setTab('result')} style={{ marginLeft: 'auto', padding: '4px 12px', background: '#dc2626', color: 'white', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
                 🔍 判定結果を見る →
               </button>
@@ -117,10 +123,16 @@ export default function App() {
             <LabInputPanel values={values} sex={sex} setSex={setSex} onChange={setVal} onClear={clearAll} onShowLabDetail={showLabDetail} />
           </>
         )}
-        {tab === 'result'  && <ResultPanel values={values} sex={sex} symptoms={symptoms} toggleSymptom={toggleSymptom} />}
-        {tab === 'explore' && <DiseaseExplorer onApplyTypical={applyTypical} onShowLabDetail={showLabDetail} />}
-        {tab === 'labinfo' && <LabDetail selectedKey={selectedLabKey} onSelect={setSelectedLabKey} />}
-        {tab === 'ref'     && <ReferenceTable />}
+        {tab === 'result' && (
+          <ResultPanel values={values} sex={sex} symptoms={symptoms} toggleSymptom={toggleSymptom} onShowDiseaseDetail={showDiseaseDetail} />
+        )}
+        {tab === 'explore' && (
+          <DiseaseExplorer onApplyTypical={applyTypical} onShowLabDetail={showLabDetail} initialDiseaseId={selectedDiseaseId} />
+        )}
+        {tab === 'labinfo' && (
+          <LabDetail selectedKey={selectedLabKey} onSelect={setSelectedLabKey} />
+        )}
+        {tab === 'ref' && <ReferenceTable />}
       </main>
     </div>
   );

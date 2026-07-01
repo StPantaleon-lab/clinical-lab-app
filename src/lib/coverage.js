@@ -4,64 +4,68 @@ import { DISEASES } from '../data/diseases.js';
 import { evalVal, REF } from '../data/referenceRanges.js';
 
 // ────────────────────────────────────────────────
-// 1項目ごとに「一致 / 否定 / 未検査」を判定
+// 検査値1項目のスコア判定
 // ────────────────────────────────────────────────
 function scoreItem(key, direction, values, sex) {
   const raw = values[key];
   if (raw === "" || raw === null || raw === undefined) return "missing";
   const ev = evalVal(key, raw, sex);
   if (ev === null) return "missing";
-  if (direction === "any") return ev !== null ? "match" : "missing";
+  if (direction === "any") return "match";
   if (ev === direction) return "match";
-  if (ev === "normal") return "normal_out"; // 正常値が出てしまっている
-  // 反対方向の異常（例：lowを期待してhighが出た）
+  if (ev === "normal") return "normal_out";
   return "opposite";
 }
 
 // ────────────────────────────────────────────────
-// 疾患ごとのスコアを計算
+// 疾患ごとのスコアを計算（検査値＋症候）
 // ────────────────────────────────────────────────
-export function scoreDiseases(values, sex) {
+export function scoreDiseases(values, sex, checkedSymptoms = {}) {
   return DISEASES.map((d) => {
+    // 検査値スコア
     const items = d.requiredKeys.map(({ key, direction }) => ({
-      key,
-      direction,
+      key, direction,
       status: scoreItem(key, direction, values, sex),
     }));
-
     const match      = items.filter(i => i.status === "match");
     const missing    = items.filter(i => i.status === "missing");
     const normalOut  = items.filter(i => i.status === "normal_out");
     const opposite   = items.filter(i => i.status === "opposite");
+    const total      = items.length;
 
-    const total = items.length;
-    const score = total === 0 ? 0
-      : (match.length * 2 - normalOut.length * 1 - opposite.length * 2) / (total * 2);
+    // 症候スコア（一致症候数 / 全症候数）
+    const matchedSymptoms = d.symptoms.filter(s => checkedSymptoms[s.key]);
+    const symptomScore    = d.symptoms.length > 0
+      ? matchedSymptoms.length / d.symptoms.length
+      : 0;
 
-    return { disease: d, items, match, missing, normalOut, opposite, score, total };
+    // 総合スコア（検査値7割・症候3割）
+    const labScore = total === 0 ? 0
+      : (match.length * 2 - normalOut.length - opposite.length * 2) / (total * 2);
+    const score = labScore * 0.7 + symptomScore * 0.3;
+
+    return { disease: d, items, match, missing, normalOut, opposite, score, total, matchedSymptoms };
   }).sort((a, b) => b.score - a.score);
 }
 
 // ────────────────────────────────────────────────
-// 判定可能 / 一部 / 不可 の分類（カバレッジ用）
+// 判定可能 / 一部 / 不可 の分類
 // ────────────────────────────────────────────────
 export function analyzeCoverage(values, sex) {
   const entered = new Set(
     Object.keys(values).filter(k => values[k] !== "" && values[k] !== null && values[k] !== undefined)
   );
-
   const evaluable = [], partial = [], unevaluable = [];
 
   for (const disease of DISEASES) {
-    const keys = disease.requiredKeys.map(r => r.key);
+    const keys    = disease.requiredKeys.map(r => r.key);
     const present = keys.filter(k => entered.has(k));
     const missing = keys.filter(k => !entered.has(k));
 
-    if (missing.length === 0) evaluable.push(disease);
-    else if (present.length > 0) partial.push({ disease, missing, present });
-    else unevaluable.push(disease);
+    if (missing.length === 0)       evaluable.push(disease);
+    else if (present.length > 0)    partial.push({ disease, missing, present });
+    else                            unevaluable.push(disease);
   }
-
   return { evaluable, partial, unevaluable };
 }
 
@@ -89,9 +93,8 @@ export function getSuggestedNextTests(values) {
     Object.keys(values).filter(k => values[k] !== "" && values[k] !== null && values[k] !== undefined)
   );
   const gainMap = {};
-
   for (const disease of DISEASES) {
-    const keys = disease.requiredKeys.map(r => r.key);
+    const keys    = disease.requiredKeys.map(r => r.key);
     const missing = keys.filter(k => !entered.has(k));
     const present = keys.filter(k => entered.has(k));
     if (missing.length === 1 && present.length > 0) {
@@ -100,7 +103,6 @@ export function getSuggestedNextTests(values) {
       gainMap[k].push(disease.name);
     }
   }
-
   return Object.entries(gainMap)
     .sort((a, b) => b[1].length - a[1].length)
     .map(([key, diseases]) => ({ key, diseases }));

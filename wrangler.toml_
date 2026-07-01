@@ -13,7 +13,3 @@ port = 8787
 
 # Cloudflare Pages と同じアカウントにデプロイする場合、
 # Pages の wrangler.toml と混在しないよう注意
-[[kv_namespaces]]
-binding = "LAB_FORMATS"
-id = "5bc3fae601434e11a50b46c136d073c2"
-

@@ -2,6 +2,166 @@
 // 優先順位: ローカルOllama → Cloudflare Worker経由Groq → ルールベース
 
 import { REF } from '../data/referenceRanges.js';
+import { SYMPTOM_GROUPS, SYMPTOM_MAP } from '../data/symptoms.js';
+
+// ─────────────────────────────────────────────────────────────────
+// 症候抽出（Groq/Ollama）
+// ─────────────────────────────────────────────────────────────────
+const SYMPTOM_SYSTEM_PROMPT = `あなたは臨床症候抽出の専門家です。
+与えられた臨床テキストに含まれる症候・身体所見・既往歴を抽出し、
+以下のJSONフォーマットのみで返答してください。
+
+出力形式（JSONのみ。コードブロック・説明文は不要）:
+{"symptoms":["キー1","キー2",...],"vitals":{"SBP":数値,"DBP":数値,"HR":数値,"BT":数値,"SpO2":数値,"RR":数値,"Height":数値,"Weight":数値},"urine":{"proteinuria":true/false,"hematuria":true/false,"UPro":数値,"UCre":数値}}
+
+症候キー一覧（該当するものだけ配列に含める）:
+fever=発熱, fatigue=倦怠感, weight_loss=体重減少, weight_gain=体重増加/浮腫, night_sweats=寝汗, chills=悪寒, anorexia=食欲不振,
+chest_pain=胸痛, palpitation=動悸, dyspnea=息切れ, orthopnea=起座呼吸, leg_edema=下腿浮腫, hypertension=高血圧, hypotension=低血圧, syncope=失神,
+nausea=悪心嘔吐, abdom_pain=腹痛, diarrhea=下痢, constipation=便秘, jaundice=黄疸, dark_urine=暗色尿, clay_stool=灰白色便, ascites=腹水, hematemesis=吐血下血,
+proteinuria=蛋白尿, hematuria=血尿, polyuria=多尿夜間頻尿, oliguria=乏尿無尿, dysuria=排尿痛,
+headache=頭痛, confusion=意識障害, neuropathy=しびれ, weakness=筋力低下, tremor=振戦, visual_change=視力変化,
+thirst=口渇多飲, heat_intol=暑がり発汗, cold_intol=寒がり, goiter=甲状腺腫大, exophthalmos=眼球突出, moon_face=満月様顔貌, central_obesity=中心性肥満, skin_pigment=色素沈着,
+purpura=点状出血紫斑, nosebleed=鼻血歯肉出血, joint_bleed=関節出血, pallor=蒼白, lymphadenopathy=リンパ節腫脹, splenomegaly=脾腫, malar_rash=蝶形紅斑, photo_sens=光線過敏,
+arthritis=関節痛, bone_pain=骨痛, myalgia=筋肉痛, tetany=テタニー, gout_attack=痛風発作,
+cough=咳嗽, hemoptysis=喀血, wheezing=喘鳴,
+xanthoma=腱黄色腫, hair_loss=脱毛, dry_skin=皮膚乾燥粘液水腫, striae=皮膚線条,
+hbv_hcv=B型C型肝炎感染歴, alcohol_hx=多量飲酒歴, smoking=喫煙歴, family_hx=家族歴, drug=薬剤歴, dialysis=透析中, obesity=肥満
+
+バイタルサイン抽出:
+- 血圧は「SBP/DBP」形式（例：132/90 mmHg → SBP:132, DBP:90）
+- 脈拍は「HR」（例：64/分 → HR:64）
+- 体温は「BT」（例：37.2℃ → BT:37.2）
+- SpO2は%で記載されたもの
+- 呼吸数は「RR」
+- 身長cm・体重kgも抽出
+
+尿所見:
+- 尿蛋白定性陽性（＋〜3＋）はproteinuria:true
+- 潜血陽性はhematuria:true
+- 随時尿蛋白(mg/dL)はUPro、尿中Cre(mg/dL)はUCre
+
+注意: 絶対にJSONのみ返す`;
+
+async function extractSymptomsViaOllama(text) {
+  const res = await fetch(OLLAMA_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(10000),
+    body: JSON.stringify({
+      model: OLLAMA_MODEL,
+      stream: false,
+      messages: [
+        { role: "system", content: SYMPTOM_SYSTEM_PROMPT },
+        { role: "user",   content: `以下の臨床テキストから症候を抽出してください:\n\n${text}` },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`);
+  const data = await res.json();
+  return data.message?.content || "";
+}
+
+async function extractSymptomsViaGroq(text, password) {
+  if (!WORKER_URL) throw new Error("WORKER_URL not set");
+  const res = await fetch(WORKER_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-App-Password": password },
+    body: JSON.stringify({
+      action: "chat",
+      model: "llama-3.3-70b-versatile",
+      messages: [
+        { role: "system", content: SYMPTOM_SYSTEM_PROMPT },
+        { role: "user",   content: `以下の臨床テキストから症候を抽出してください:\n\n${text}` },
+      ],
+      temperature: 0,
+      max_tokens: 800,
+    }),
+  });
+  if (!res.ok) throw new Error(`Worker HTTP ${res.status}`);
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || "";
+}
+
+function parseSymptomsResponse(raw) {
+  const clean = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+  const parsed = JSON.parse(clean);
+
+  // 有効なキーのみ通す
+  const validSymptoms = (parsed.symptoms || []).filter(k => SYMPTOM_MAP[k]);
+
+  // バイタル・尿所見から追加する症候
+  const vitals = parsed.vitals || {};
+  const urine  = parsed.urine  || {};
+
+  if (vitals.SBP && vitals.SBP >= 140) validSymptoms.push("hypertension");
+  if (vitals.SBP && vitals.SBP < 90)   validSymptoms.push("hypotension");
+  if (urine.proteinuria)                validSymptoms.push("proteinuria");
+  if (urine.hematuria)                  validSymptoms.push("hematuria");
+
+  // 重複除去
+  const symptoms = [...new Set(validSymptoms)];
+
+  // バイタル数値をREF形式に変換
+  const vitalValues = {};
+  const vMap = { SBP:"SBP", DBP:"DBP", HR:"HR", BT:"BT", SpO2:"SpO2", RR:"RR", Height:"Height", Weight:"Weight" };
+  for (const [k, rk] of Object.entries(vMap)) {
+    if (vitals[k] !== undefined && vitals[k] !== null) vitalValues[rk] = String(vitals[k]);
+  }
+  const urineValues = {};
+  if (urine.UPro !== undefined) urineValues["UPro"] = String(urine.UPro);
+  if (urine.UCre !== undefined) urineValues["UCre"] = String(urine.UCre);
+
+  return { symptoms, vitalValues, urineValues };
+}
+
+// 症候抽出メインエントリ
+export async function extractSymptoms(text, password) {
+  // 1. Ollama
+  try {
+    const raw = await extractSymptomsViaOllama(text);
+    return parseSymptomsResponse(raw);
+  } catch {}
+
+  // 2. Groq
+  if (WORKER_URL && password) {
+    try {
+      const raw = await extractSymptomsViaGroq(text, password);
+      return parseSymptomsResponse(raw);
+    } catch {}
+  }
+
+  // 3. ルールベース（キーワードマッチ）
+  return extractSymptomsRuleBased(text);
+}
+
+function extractSymptomsRuleBased(text) {
+  const found = [];
+  for (const g of SYMPTOM_GROUPS) {
+    for (const s of g.symptoms) {
+      if (s.aliases.some(a => text.includes(a))) found.push(s.key);
+    }
+  }
+  // バイタルルールベース
+  const vitalValues = {};
+  const bpM = text.match(/(\d{2,3})[\/／](\d{2,3})\s*(?:mmHg)?/);
+  if (bpM) { vitalValues.SBP = bpM[1]; vitalValues.DBP = bpM[2]; }
+  const hrM = text.match(/脈拍\s*(\d+)/);
+  if (hrM) vitalValues.HR = hrM[1];
+  const btM = text.match(/体温\s*([\d.]+)/);
+  if (btM) vitalValues.BT = btM[1];
+  const htM = text.match(/身長\s*(\d+)/);
+  if (htM) vitalValues.Height = htM[1];
+  const wtM = text.match(/体重\s*([\d.]+)/);
+  if (wtM) vitalValues.Weight = wtM[1];
+  // 尿所見ルールベース
+  const urineValues = {};
+  const uproM = text.match(/尿蛋白\s*([\d.]+)\s*mg\/dL/);
+  if (uproM) urineValues.UPro = uproM[1];
+  const ucreM = text.match(/(?:尿中)?クレアチニン\s*([\d.]+)\s*mg\/dL/);
+  if (ucreM) urineValues.UCre = ucreM[1];
+
+  return { symptoms: [...new Set(found)], vitalValues, urineValues };
+}
 
 const OLLAMA_URL = "http://localhost:11434/api/chat";
 const WORKER_URL = import.meta.env.VITE_WORKER_URL || "";

@@ -1,6 +1,6 @@
 // src/components/AutoInput.jsx
 import { useState, useRef } from 'react';
-import { extractLabValuesWithAI, extractLabValuesFromImage, extractLabValuesRuleBased, saveExample } from '../lib/parseLabValues.js';
+import { extractLabValuesWithAI, extractLabValuesFromImage, extractLabValuesRuleBased, saveExample, extractSymptoms } from '../lib/parseLabValues.js';
 import { REF } from '../data/referenceRanges.js';
 
 const SOURCE_LABEL = {
@@ -27,7 +27,7 @@ export default function AutoInput({ onApply, password }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
-  // フォーマット学習
+  const [symptomResult, setSymptomResult] = useState(null);
   const [teachMode, setTeachMode] = useState(false);
   const [snippet, setSnippet] = useState('');
   const [saving, setSaving] = useState(false);
@@ -47,13 +47,19 @@ export default function AutoInput({ onApply, password }) {
   };
 
   const run = async () => {
-    setError(''); setResult(null); setLoading(true); setTeachMode(false); setSaveMsg('');
+    setError(''); setResult(null); setLoading(true); setTeachMode(false); setSaveMsg(''); setSymptomResult(null);
     try {
       let parsed;
       if (mode === 'text') {
         if (!text.trim()) { setError('テキストを入力してください。'); setLoading(false); return; }
-        parsed = await extractLabValuesWithAI(text, password);
-        setSnippet(text.slice(0, 300)); // スニペットとして先頭300文字を保持
+        // 検査値と症候を並行して抽出
+        const [labResult, symResult] = await Promise.all([
+          extractLabValuesWithAI(text, password),
+          extractSymptoms(text, password),
+        ]);
+        parsed = labResult;
+        setSymptomResult(symResult);
+        setSnippet(text.slice(0, 300));
       } else {
         if (!imageB64) { setError('画像をアップロードしてください。'); setLoading(false); return; }
         parsed = await extractLabValuesFromImage(imageB64, imageMime, password);
@@ -69,8 +75,14 @@ export default function AutoInput({ onApply, password }) {
 
   const applyAll = () => {
     if (!result) return;
-    onApply(result.values, result.sex);
-    setResult(null); setText(''); setImageB64(null); setImagePreview(null); setTeachMode(false);
+    onApply(
+      result.values,
+      result.sex,
+      symptomResult?.symptoms || [],
+      symptomResult?.vitalValues || {},
+      symptomResult?.urineValues || {},
+    );
+    setResult(null); setText(''); setImageB64(null); setImagePreview(null); setTeachMode(false); setSymptomResult(null);
   };
 
   // 現在の入力値（反映後）を正解として保存
@@ -153,6 +165,22 @@ export default function AutoInput({ onApply, password }) {
 
           {result.unparsed?.length > 0 && (
             <div style={{ fontSize: 12, color: '#92400e', marginBottom: 10 }}>⚠️ 解析できなかった項目: {result.unparsed.join('、')}</div>
+          )}
+
+          {/* 症候抽出結果 */}
+          {symptomResult && symptomResult.symptoms.length > 0 && (
+            <div style={{ marginBottom: 10, padding: '8px 12px', background: '#fdf4ff', borderRadius: 8, border: '1px solid #e879f9' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#7e22ce', marginBottom: 4 }}>
+                🩺 抽出された症候（{symptomResult.symptoms.length}件）
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {symptomResult.symptoms.map(k => (
+                  <span key={k} style={{ padding: '2px 8px', borderRadius: 20, background: '#ede9fe', color: '#6d28d9', fontSize: 11, fontWeight: 600 }}>
+                    {k}
+                  </span>
+                ))}
+              </div>
+            </div>
           )}
 
           {/* アクションボタン */}
