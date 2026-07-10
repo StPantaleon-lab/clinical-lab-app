@@ -1,0 +1,20 @@
+{
+  "name": "clinical-differential-atlas",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "臨床検査 × 疾患 の鑑別アトラス ― 診断ではなく「鑑別全体のどこにいるか」を理解するためのツール",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.2"
+  }
+}
