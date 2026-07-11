@@ -30,21 +30,3 @@ export const SYS_DISEASES      = collect('DISEASES');
 export const SYS_PATHWAYS      = collect('PATHWAYS');
 export const SYS_PRESENTATIONS = collect('PRESENTATIONS');
 export const SYS_GROUPS        = Object.assign({}, ...MODULES.map((m) => m.GROUPS || {}));
-
-/**
- * コア（tests.js 等）と各科モジュールを結合する。
- * 同じ id が二度出てきた場合は最初のものを採用し、重複IDを返す（validate.mjs が報告する）。
- */
-export function mergeById(...arrays) {
-  const seen = new Map();
-  const dups = [];
-  for (const arr of arrays) {
-    for (const item of arr) {
-      if (seen.has(item.id)) { dups.push(item.id); continue; }
-      seen.set(item.id, item);
-    }
-  }
-  const out = [...seen.values()];
-  out.duplicateIds = dups;
-  return out;
-}

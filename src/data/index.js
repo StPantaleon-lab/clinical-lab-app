@@ -1,17 +1,16 @@
 // src/data/index.js
 // ═══════════════════════════════════════════════════════════════════════
-//  全データの集約点 ― コア + 各科モジュール → buildIndex() → ATLAS
+//  全データの集約点 ― コア + 各科モジュール + オーバーライド → ATLAS
 // ═══════════════════════════════════════════════════════════════════════
-//  UIコンポーネントはこの ATLAS（逆引き済みインデックス）だけを使う。
-//
-//  データは2層になっている:
+//  データは3層になっている:
 //    ① コア（tests.js / findings.js / diseases.js / pathways.js / presentations.js）
-//       … 消化器・血液の基礎部分。最初に読み込まれる。
 //    ② 各科モジュール（systems/*.js）
-//       … 科ごとに独立したファイル。追加はここに1ファイル足すだけ。
+//    ③ オーバーライド（overrides.generated.js）
+//         … 管理画面からKVに書いた内容を `node scripts/apply-kv.mjs` で
+//           ローカルへ落としたもの。同じ id があれば ③ が勝つ（上書き）。
 //
-//  同一 id が両方に現れた場合は「先に読まれた方（コア）」が勝つ。
-//  重複は validate.mjs が検出して報告する。
+//  さらに実行時には masterData.js が KV から同形のデータを取得し、
+//  buildAtlas() に渡してライブに差し替えられる（ログイン時）。
 // ═══════════════════════════════════════════════════════════════════════
 
 import { buildIndex } from '../model/engine.js';
@@ -23,52 +22,95 @@ import { PATHWAYS as CORE_PATHWAYS }         from './pathways.js';
 import { PRESENTATIONS as CORE_PRESENTATIONS } from './presentations.js';
 import { DERIVED }       from './derived.js';
 import { PATTERNS }      from './patterns.js';
-import { LAB_INFO }      from './labInfo.js';
-import { REF, GROUP_ORDER } from './referenceRanges.js';
+import { LAB_INFO as CORE_LAB_INFO } from './labInfo.js';
+import { LAB_INFO_EXTRA } from './labInfoExtra.js';
+import { REF as CORE_REF, GROUP_ORDER } from './referenceRanges.js';
 
 import {
   SYS_TESTS, SYS_FINDINGS, SYS_DISEASES, SYS_PATHWAYS, SYS_PRESENTATIONS, SYS_GROUPS,
-  mergeById,
 } from './systems/_index.js';
 
-// ── コア + 各科モジュールを結合 ─────────────────────────
-export const TESTS         = mergeById(CORE_TESTS, SYS_TESTS);
-export const FINDINGS      = mergeById(CORE_FINDINGS, SYS_FINDINGS);
-export const DISEASES      = mergeById(CORE_DISEASES, SYS_DISEASES);
-export const PATHWAYS      = mergeById(CORE_PATHWAYS, SYS_PATHWAYS);
-export const PRESENTATIONS = mergeById(CORE_PRESENTATIONS, SYS_PRESENTATIONS);
-export const GROUPS        = { ...CORE_GROUPS, ...SYS_GROUPS };
+import OVERRIDES from './overrides.generated.js';
 
-// 重複ID（validate.mjs が参照する）
+// ── 結合ユーティリティ ────────────────────────────────
+/** 先勝ち（重複を検出）。コアと各科モジュールの結合に使う。 */
+export function mergeById(...arrays) {
+  const seen = new Map();
+  const dups = [];
+  for (const arr of arrays) for (const item of arr) {
+    if (seen.has(item.id)) { dups.push(item.id); continue; }
+    seen.set(item.id, item);
+  }
+  const out = [...seen.values()];
+  out.duplicateIds = dups;
+  return out;
+}
+/** 後勝ち（上書き）。オーバーライド／KVの適用に使う。 */
+export function upsertById(base, patch = []) {
+  const m = new Map(base.map((x) => [x.id, x]));
+  for (const item of patch) {
+    if (item?.__deleted) { m.delete(item.id); continue; }
+    m.set(item.id, { ...(m.get(item.id) || {}), ...item });
+  }
+  return [...m.values()];
+}
+
+// ── 静的データ（コア + 各科） ─────────────────────────
+export const STATIC = {
+  TESTS:         mergeById(CORE_TESTS, SYS_TESTS),
+  FINDINGS:      mergeById(CORE_FINDINGS, SYS_FINDINGS),
+  DISEASES:      mergeById(CORE_DISEASES, SYS_DISEASES),
+  PATHWAYS:      mergeById(CORE_PATHWAYS, SYS_PATHWAYS),
+  PRESENTATIONS: mergeById(CORE_PRESENTATIONS, SYS_PRESENTATIONS),
+  GROUPS:        { ...CORE_GROUPS, ...SYS_GROUPS },
+  REF:           CORE_REF,
+  LAB_INFO:      { ...CORE_LAB_INFO, ...LAB_INFO_EXTRA },
+};
+
 export const DUPLICATE_IDS = {
-  tests: TESTS.duplicateIds, findings: FINDINGS.duplicateIds,
-  diseases: DISEASES.duplicateIds, pathways: PATHWAYS.duplicateIds,
-  presentations: PRESENTATIONS.duplicateIds,
+  tests: STATIC.TESTS.duplicateIds, findings: STATIC.FINDINGS.duplicateIds,
+  diseases: STATIC.DISEASES.duplicateIds, pathways: STATIC.PATHWAYS.duplicateIds,
+  presentations: STATIC.PRESENTATIONS.duplicateIds,
 };
 
-// 素データ
-export const RAW = {
-  TESTS, FINDINGS, DISEASES, PATHWAYS, PRESENTATIONS, DERIVED, PATTERNS,
-  GROUPS, LAB_INFO, REF, GROUP_ORDER,
-};
+/**
+ * 静的データにオーバーライド（overrides.json もしくは KV から取得した同形データ）を
+ * 重ねて ATLAS を作る。UI はこの戻り値だけを使う。
+ * @param {object} ov { TESTS, FINDINGS, DISEASES, PATHWAYS, PRESENTATIONS, GROUPS, REF, LAB_INFO }
+ */
+export function buildAtlas(ov = {}) {
+  const TESTS         = upsertById(STATIC.TESTS,         ov.TESTS);
+  const FINDINGS      = upsertById(STATIC.FINDINGS,      ov.FINDINGS);
+  const DISEASES      = upsertById(STATIC.DISEASES,      ov.DISEASES);
+  const PATHWAYS      = upsertById(STATIC.PATHWAYS,      ov.PATHWAYS);
+  const PRESENTATIONS = upsertById(STATIC.PRESENTATIONS, ov.PRESENTATIONS);
+  const GROUPS   = { ...STATIC.GROUPS,   ...(ov.GROUPS   || {}) };
+  const REF      = { ...STATIC.REF,      ...(ov.REF      || {}) };
+  const LAB_INFO = { ...STATIC.LAB_INFO, ...(ov.LAB_INFO || {}) };
 
-// 逆引きインデックス済みのアトラス（UIが使う唯一のオブジェクト）
-export const ATLAS = {
-  ...buildIndex({ TESTS, FINDINGS, DISEASES, PATHWAYS, DERIVED, PATTERNS, PRESENTATIONS }),
-  GROUPS, LAB_INFO, REF, GROUP_ORDER,
-};
+  const atlas = {
+    ...buildIndex({ TESTS, FINDINGS, DISEASES, PATHWAYS, DERIVED, PATTERNS, PRESENTATIONS }),
+    GROUPS, LAB_INFO, REF, GROUP_ORDER,
+  };
+  atlas.SYSTEMS = [...new Set(DISEASES.map((d) => d.system))].sort();
+  atlas.STATS = {
+    tests: TESTS.length, findings: FINDINGS.length, diseases: DISEASES.length,
+    pathways: PATHWAYS.length, presentations: PRESENTATIONS.length,
+    derived: DERIVED.length, patterns: PATTERNS.length, systems: atlas.SYSTEMS.length,
+    source: ov.__source || 'static',
+  };
+  return atlas;
+}
 
-// 診療系統の一覧（UIの絞り込みに使う）
-export const SYSTEMS = [...new Set(DISEASES.map((d) => d.system))].sort();
+// 既定のATLAS（オーバーライド適用済み）。KVログイン時は App が差し替える。
+export const ATLAS = buildAtlas(OVERRIDES);
 
-// データ規模のサマリ（フッタ等に表示）
-export const ATLAS_STATS = {
-  tests: TESTS.length,
-  findings: FINDINGS.length,
-  diseases: DISEASES.length,
-  pathways: PATHWAYS.length,
-  presentations: PRESENTATIONS.length,
-  derived: DERIVED.length,
-  patterns: PATTERNS.length,
-  systems: SYSTEMS.length,
-};
+export const TESTS = ATLAS.TESTS, FINDINGS = ATLAS.FINDINGS, DISEASES = ATLAS.DISEASES;
+export const PATHWAYS = ATLAS.PATHWAYS, PRESENTATIONS = ATLAS.PRESENTATIONS;
+export const GROUPS = ATLAS.GROUPS, REF = ATLAS.REF, LAB_INFO = ATLAS.LAB_INFO;
+export const SYSTEMS = ATLAS.SYSTEMS;
+export const ATLAS_STATS = ATLAS.STATS;
+export { DERIVED, PATTERNS, GROUP_ORDER };
+
+// 素データ（KVへの初期投入 scripts/seed-kv.mjs が使う）
+export const RAW = { ...STATIC, DERIVED, PATTERNS, GROUP_ORDER };

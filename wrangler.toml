@@ -1,0 +1,18 @@
+name = "clinical-atlas-proxy"
+main = "workers/proxy.js"
+compatibility_date = "2024-09-01"
+
+[dev]
+port = 8787
+
+# 本番の環境変数は Cloudflare Dashboard の
+#   Workers > clinical-atlas-proxy > Settings > Variables で設定する:
+#     APP_PASSWORD    … 一般ユーザー合言葉
+#     ADMIN_PASSWORD  … 管理者合言葉
+#     GROQ_API_KEY    … Groq APIキー（自動読み取り用）
+# （このファイルには絶対に書かない）
+
+# KV名前空間: wrangler kv namespace create ATLAS_KV で作成し、出力されたidを貼る
+[[kv_namespaces]]
+binding = "ATLAS_KV"
+id = ""
